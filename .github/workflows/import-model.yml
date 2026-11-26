@@ -1,0 +1,43 @@
+name: Import LayoutLMv2 Model
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: import-model
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and split original weights
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p model
+          base=https://huggingface.co/microsoft/layoutlmv2-base-uncased/resolve/main
+          for file in config.json preprocessor_config.json vocab.txt pytorch_model.bin README.md; do
+            curl -fL --retry 3 "$base/$file" -o "model/$file"
+          done
+          cd model
+          sha256sum pytorch_model.bin > SHA256SUMS
+          rm -f pytorch_model.bin.part[0-9][0-9]
+          split -b 90M -d -a 2 pytorch_model.bin pytorch_model.bin.part
+          rm pytorch_model.bin
+          cd ..
+          cat > restore.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cd "$(dirname "$0")/model"
+          cat pytorch_model.bin.part[0-9][0-9] > pytorch_model.bin
+          sha256sum -c SHA256SUMS
+          EOF
+          chmod +x restore.sh
+          printf '%s\n' '/model/pytorch_model.bin' > .gitignore
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add model restore.sh .gitignore
+          if ! git diff --cached --quiet; then
+            git commit -m 'Import original LayoutLMv2 model in 90 MiB chunks'
+            git push
+          fi
